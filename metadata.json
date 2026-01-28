@@ -1,8 +1,5 @@
 {
-  "name": "Copy of ",
-  "description": "Professional Google Drive migration tool for transferring data between Gmail and Workspace accounts with full ownership transfer and sync verification.",
-  "requestFramePermissions": [
-    "camera",
-    "microphone"
-  ]
+  "name": "DriveMigrator Pro",
+  "description": "Ferramenta profissional para migração de arquivos entre contas Gmail e Workspace.",
+  "requestFramePermissions": []
 }

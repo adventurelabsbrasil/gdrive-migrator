@@ -5,8 +5,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DriveMigrator Pro</title>
-    <!-- Nota: Em uma extensão real, você deve baixar o tailwind.min.css e incluí-lo localmente -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Nota: Em extensões V3, scripts remotos são proibidos. 
+         Para usar Tailwind, você deve baixar o arquivo tailwind.min.css e referenciá-lo localmente.
+         Como alternativa temporária, usaremos estilos inline básicos para garantir funcionamento. -->
+    <style>
+      body { font-family: sans-serif; margin: 0; background: #f8fafc; }
+      #root { width: 800px; height: 600px; overflow: hidden; display: flex; flex-direction: column; }
+    </style>
 <script type="importmap">
 {
   "imports": {
@@ -17,7 +22,7 @@
 }
 </script>
 </head>
-<body class="bg-slate-50 text-slate-900 font-sans">
+<body>
     <div id="root"></div>
 </body>
 </html>

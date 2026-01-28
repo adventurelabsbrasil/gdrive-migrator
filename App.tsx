@@ -1,14 +1,13 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { AuthState, DriveFile, MigrationLog, MigrationStats } from './types';
+import React, { useState, useEffect, useRef } from 'react';
+import { DriveFile, MigrationLog, MigrationStats } from './types';
 import { DriveService } from './services/googleDrive';
 import DriveItem from './components/DriveItem';
 
-// Declare chrome for types
 declare const chrome: any;
 
-// INSTRUÇÃO: Substitua este valor pelo seu ID do Cliente gerado no Google Cloud Console
-const GOOGLE_CLIENT_ID = 'SUA_CLIENT_ID_AQUI.apps.googleusercontent.com';
+// Client ID fornecido pelo usuário
+const GOOGLE_CLIENT_ID = '842276626628-e2nos59rlbsagd9m3941bsgdvbprqed2.apps.googleusercontent.com';
 
 const BATCH_SIZE = 5;
 
@@ -29,25 +28,22 @@ const App: React.FC = () => {
   const destService = useRef<DriveService | null>(null);
 
   const handleAuth = (type: 'source' | 'dest') => {
-    if (GOOGLE_CLIENT_ID.includes('SUA_CLIENT_ID')) {
-      alert('Por favor, configure o GOOGLE_CLIENT_ID no arquivo App.tsx.');
-      return;
-    }
-
-    // Em extensões, usamos launchWebAuthFlow para permitir login em múltiplas contas
-    const redirectUri = `https://${chrome.runtime.id}.chromiumapp.org/`;
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent('https://www.googleapis.com/auth/drive')}&prompt=select_account`;
+    // A URL de redirecionamento autorizada no Console para o ID ljhmbicggpkcdhagonodjlmgckdincpe
+    const redirectUri = `https://ljhmbicggpkcdhagonodjlmgckdincpe.chromiumapp.org/`;
+    
+    const scope = 'https://www.googleapis.com/auth/drive';
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&prompt=select_account`;
 
     chrome.identity.launchWebAuthFlow({
       url: authUrl,
       interactive: true
     }, (redirectUrl: string) => {
       if (chrome.runtime.lastError || !redirectUrl) {
-        console.error(chrome.runtime.lastError);
+        console.error('Auth Error:', chrome.runtime.lastError);
+        alert('Erro na autenticação. Verifique se o URI de redirecionamento no Console está configurado exatamente como: ' + redirectUri);
         return;
       }
 
-      // Extrair o access_token da URL de redirecionamento
       const params = new URLSearchParams(new URL(redirectUrl).hash.substring(1));
       const token = params.get('access_token');
 
@@ -107,85 +103,69 @@ const App: React.FC = () => {
 
   const startMigration = async () => {
     if (!sourceService.current || !destService.current) return;
-    if (selectedIds.size === 0) return alert('Selecione ao menos um arquivo ou pasta.');
+    if (selectedIds.size === 0) return alert('Selecione arquivos ou pastas.');
 
     setIsMigrating(true);
     setStats({ total: selectedIds.size, processed: 0, success: 0, failed: 0, skipped: 0 });
     setLogs([]);
 
     const itemsToProcess = sourceFiles.filter(f => selectedIds.has(f.id));
-    const targetFolderId = 'root';
-
+    
+    // Processamento em lotes (Batch processing)
     for (let i = 0; i < itemsToProcess.length; i += BATCH_SIZE) {
       const batch = itemsToProcess.slice(i, i + BATCH_SIZE);
-      await Promise.all(batch.map(item => processItem(item, targetFolderId)));
+      await Promise.all(batch.map(item => processItem(item, 'root')));
     }
 
     setIsMigrating(false);
-    alert('Migração concluída!');
+    alert('Migração em lote concluída!');
   };
 
   const processItem = async (item: DriveFile, destParentId: string) => {
     if (!sourceService.current || !destService.current) return;
 
     try {
+      // 1. Não duplicar: verifica se o arquivo já existe no destino via propriedade personalizada
       const existingId = await destService.current.findDuplicate(destParentId, item.id);
       if (existingId) {
         addLog({
-          sourceId: item.id,
-          sourceName: item.name,
-          destId: existingId,
-          destName: item.name,
-          timestamp: new Date().toISOString(),
-          status: 'skipped'
+          sourceId: item.id, sourceName: item.name, destId: existingId, destName: item.name,
+          timestamp: new Date().toISOString(), status: 'skipped'
         });
         updateStats('skipped');
         return;
       }
 
+      const logMsg = `MIGRADO: ${new Date().toLocaleString()}\nOrigem ID: ${item.id}\nProprietário anterior: Cloud-to-Cloud Migrator`;
+
       if (item.mimeType === 'application/vnd.google-apps.folder') {
         const newFolderId = await destService.current.createFolder(item.name, destParentId);
-        const logMsg = `[MIGRATION LOG] Original ID: ${item.id} | Migrated at: ${new Date().toLocaleString()}`;
+        // Atualiza pasta com metadados de log
         await destService.current.updateFile(newFolderId, { 
           description: logMsg,
           properties: { 'original_id': item.id } 
         });
-
         addLog({
-          sourceId: item.id,
-          sourceName: item.name,
-          destId: newFolderId,
-          destName: item.name,
-          timestamp: new Date().toISOString(),
-          status: 'success'
+          sourceId: item.id, sourceName: item.name, destId: newFolderId, destName: item.name,
+          timestamp: new Date().toISOString(), status: 'success'
         });
         updateStats('success');
       } else {
-        const logMsg = `[MIGRATION LOG] Original ID: ${item.id} | Size: ${item.size || 'unknown'} | Migrated: ${new Date().toLocaleString()}`;
+        // Cópia direta: o token de destino garante que a conta destino seja o NOVO proprietário
         const copiedFile = await destService.current.copyFile(item.id, destParentId, {
           description: logMsg,
           properties: { 'original_id': item.id }
         });
-
         addLog({
-          sourceId: item.id,
-          sourceName: item.name,
-          destId: copiedFile.id,
-          destName: item.name,
-          timestamp: new Date().toISOString(),
-          status: 'success'
+          sourceId: item.id, sourceName: item.name, destId: copiedFile.id, destName: item.name,
+          timestamp: new Date().toISOString(), status: 'success'
         });
         updateStats('success');
       }
     } catch (err: any) {
       addLog({
-        sourceId: item.id,
-        sourceName: item.name,
-        destId: '',
-        destName: '',
-        timestamp: new Date().toISOString(),
-        status: 'failed',
-        error: err.message
+        sourceId: item.id, sourceName: item.name, destId: '', destName: '',
+        timestamp: new Date().toISOString(), status: 'failed', error: err.message
       });
       updateStats('failed');
     }
@@ -206,136 +186,98 @@ const App: React.FC = () => {
   const verifySync = async () => {
     if (!sourceService.current || !destService.current) return;
     setSyncVerifying(true);
-    
     const items = sourceFiles.filter(f => selectedIds.has(f.id));
     let missing = 0;
-    
     for (const item of items) {
       const exists = await destService.current.findDuplicate('root', item.id);
       if (!exists) missing++;
     }
-
     setSyncVerifying(false);
-    if (missing === 0) alert('Sincronização verificada: Todos os itens selecionados estão no destino!');
-    else alert(`Sincronização incompleta: Faltam ${missing} itens no destino.`);
+    alert(missing === 0 ? '✅ Sincronização Verificada: 100% OK' : `⚠️ Inconsistência: ${missing} itens faltantes.`);
   };
 
   return (
-    <div className="min-h-screen flex flex-col w-[800px] h-[600px] overflow-hidden">
-      <header className="bg-slate-900 text-white p-4 shadow-lg sticky top-0 z-50">
-        <div className="container mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <span className="text-2xl">⚡</span>
-            <h1 className="text-xl font-bold tracking-tight">DriveMigrator Pro</h1>
-          </div>
-          <div className="flex gap-3">
-            <button 
-              onClick={() => handleAuth('source')}
-              className={`px-4 py-2 rounded-lg text-xs font-medium transition-all ${sourceToken ? 'bg-green-600' : 'bg-blue-600 hover:bg-blue-700'}`}
-            >
-              {sourceToken ? 'Origem ✔️' : 'Login Origem'}
-            </button>
-            <button 
-              onClick={() => handleAuth('dest')}
-              className={`px-4 py-2 rounded-lg text-xs font-medium transition-all ${destToken ? 'bg-green-600' : 'bg-indigo-600 hover:bg-indigo-700'}`}
-            >
-              {destToken ? 'Destino ✔️' : 'Login Destino'}
-            </button>
-          </div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#f1f5f9' }}>
+      <header style={{ background: '#0f172a', color: 'white', padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '20px' }}>🚀</span>
+          <h1 style={{ margin: 0, fontSize: '16px', fontWeight: 800, letterSpacing: '0.5px' }}>DRIVE MIGRATOR</h1>
+        </div>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={() => handleAuth('source')} style={{ background: sourceToken ? '#10b981' : '#3b82f6', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 700 }}>
+            {sourceToken ? 'ORIGEM OK' : 'AUTH ORIGEM'}
+          </button>
+          <button onClick={() => handleAuth('dest')} style={{ background: destToken ? '#10b981' : '#6366f1', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 700 }}>
+            {destToken ? 'DESTINO OK' : 'AUTH DESTINO'}
+          </button>
         </div>
       </header>
 
-      <main className="flex-1 p-4 grid grid-cols-1 lg:grid-cols-3 gap-4 overflow-hidden">
-        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
-          <div className="p-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <button onClick={goBack} disabled={folderPath.length <= 1} className="p-1 hover:bg-slate-200 rounded disabled:opacity-30">⬅️</button>
-              <div className="text-xs font-medium text-slate-600 truncate max-w-[200px]">
-                {folderPath.map((f, i) => (
-                  <span key={f.id}>{i > 0 && ' / '}{f.name}</span>
-                ))}
-              </div>
+      <main style={{ flex: 1, display: 'grid', gridTemplateColumns: '1.8fr 1.2fr', gap: '12px', padding: '12px', overflow: 'hidden' }}>
+        <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 1px 3px 0 rgb(0 0 0 / 0.1)' }}>
+          <div style={{ padding: '10px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: 700, color: '#475569' }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button onClick={goBack} disabled={folderPath.length <= 1} style={{ border: 'none', background: '#cbd5e1', cursor: 'pointer', padding: '2px 6px', borderRadius: '4px' }}>VOLTAR</button>
+              <span style={{ color: '#1e293b' }}>{folderPath[folderPath.length-1].name.toUpperCase()}</span>
             </div>
-            <div className="text-[10px] text-slate-500 uppercase font-bold">
-              {selectedIds.size} selecionados
-            </div>
+            <span style={{ color: '#3b82f6' }}>{selectedIds.size} SELECIONADOS</span>
           </div>
-
-          <div className="flex-1 overflow-y-auto">
+          
+          <div style={{ flex: 1, overflowY: 'auto' }}>
             {!sourceToken ? (
-              <div className="flex flex-col items-center justify-center h-full text-slate-400 p-8 text-center">
-                <span className="text-4xl mb-2">🔑</span>
-                <p className="text-sm">Faça login na conta de origem para listar os arquivos.</p>
-                {GOOGLE_CLIENT_ID.includes('SUA_CLIENT_ID') && (
-                  <p className="text-red-500 text-[10px] mt-2 font-mono bg-red-50 p-2 rounded">ERRO: Configure o Client ID no App.tsx</p>
-                )}
+              <div style={{ padding: '80px 20px', textAlign: 'center', color: '#94a3b8' }}>
+                <div style={{ fontSize: '40px', marginBottom: '16px' }}>🔑</div>
+                <p style={{ fontSize: '13px', maxWidth: '200px', margin: '0 auto' }}>Faça login na conta de origem para começar a listar arquivos.</p>
               </div>
-            ) : sourceFiles.length === 0 ? (
-              <div className="p-8 text-center text-slate-500 text-sm italic">Pasta vazia.</div>
             ) : (
               sourceFiles.map(file => (
-                <DriveItem 
-                  key={file.id} 
-                  item={file} 
-                  isSelected={selectedIds.has(file.id)}
-                  onToggle={toggleSelect}
-                  onNavigate={file.mimeType === 'application/vnd.google-apps.folder' ? () => navigateToFolder(file.id, file.name) : undefined}
-                />
+                <DriveItem key={file.id} item={file} isSelected={selectedIds.has(file.id)} onToggle={toggleSelect} onNavigate={file.mimeType.includes('folder') ? () => navigateToFolder(file.id, file.name) : undefined} />
               ))
             )}
           </div>
 
-          <div className="p-3 bg-slate-50 border-t border-slate-200 flex gap-2">
-             <button 
-              onClick={startMigration}
-              disabled={isMigrating || selectedIds.size === 0 || !destToken}
-              className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-lg text-sm shadow-md disabled:opacity-50 transition-all"
+          <div style={{ padding: '16px', borderTop: '1px solid #e2e8f0', display: 'flex', gap: '10px', backgroundColor: '#f8fafc' }}>
+            <button 
+              onClick={startMigration} 
+              disabled={isMigrating || !destToken || selectedIds.size === 0} 
+              style={{ flex: 1, padding: '12px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 800, fontSize: '12px', cursor: 'pointer', opacity: (isMigrating || !destToken || selectedIds.size === 0) ? 0.5 : 1, transition: 'all 0.2s' }}
             >
-              {isMigrating ? '🔄 Migrando...' : '🚀 Iniciar Migração'}
+              {isMigrating ? '⚡ PROCESSANDO MIGRACAO...' : 'COPIAR PARA DESTINO'}
             </button>
             <button 
-              onClick={verifySync}
-              disabled={syncVerifying || selectedIds.size === 0 || !destToken}
-              className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold py-2 px-4 rounded-lg text-xs shadow-sm disabled:opacity-50"
+              onClick={verifySync} 
+              disabled={syncVerifying || !destToken || selectedIds.size === 0}
+              style={{ padding: '12px 16px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}
             >
-              {syncVerifying ? '🔍' : '✔️ Verificar'}
+              VERIFICAR SINCRONISMO
             </button>
           </div>
         </div>
 
-        <div className="space-y-4 overflow-hidden flex flex-col">
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3">Status</h2>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-blue-50 p-2 rounded border border-blue-100">
-                <p className="text-[10px] text-blue-600 font-bold">OK</p>
-                <p className="text-lg font-black text-blue-900">{stats.success}</p>
-              </div>
-              <div className="bg-red-50 p-2 rounded border border-red-100">
-                <p className="text-[10px] text-red-600 font-bold">ERRO</p>
-                <p className="text-lg font-black text-red-900">{stats.failed}</p>
-              </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflow: 'hidden' }}>
+          <div style={{ background: 'white', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', boxShadow: '0 1px 3px 0 rgb(0 0 0 / 0.1)' }}>
+            <div style={{ textAlign: 'center', borderRight: '1px solid #f1f5f9' }}>
+              <div style={{ fontSize: '10px', fontWeight: 800, color: '#10b981', marginBottom: '4px' }}>SUCESSO</div>
+              <div style={{ fontSize: '24px', fontWeight: 900, color: '#0f172a' }}>{stats.success}</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '10px', fontWeight: 800, color: '#ef4444', marginBottom: '4px' }}>FALHA</div>
+              <div style={{ fontSize: '24px', fontWeight: 900, color: '#0f172a' }}>{stats.failed}</div>
             </div>
           </div>
 
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col flex-1">
-            <div className="p-3 bg-slate-900 text-white text-[10px] font-bold">LOG DE ATIVIDADES</div>
-            <div className="flex-1 overflow-y-auto p-2 font-mono text-[9px] space-y-1 bg-slate-50">
-              {logs.length === 0 ? (
-                <p className="text-slate-400 text-center mt-4">Aguardando início...</p>
-              ) : (
-                logs.map((log, i) => (
-                  <div key={i} className={`p-1.5 rounded border-l-2 ${
-                    log.status === 'success' ? 'bg-green-50 border-green-500' :
-                    log.status === 'skipped' ? 'bg-amber-50 border-amber-500' :
-                    'bg-red-50 border-red-500'
-                  }`}>
-                    <div className="flex justify-between font-bold">
-                      <span className={log.status === 'success' ? 'text-green-700' : 'text-slate-700'}>{log.sourceName.substring(0, 20)}...</span>
-                    </div>
-                  </div>
-                ))
-              )}
+          <div style={{ flex: 1, background: '#1e293b', borderRadius: '12px', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid #334155' }}>
+            <div style={{ padding: '8px 12px', background: '#334155', color: '#94a3b8', fontSize: '10px', fontWeight: 700, letterSpacing: '1px' }}>LOG DE EVENTOS</div>
+            <div style={{ flex: 1, padding: '12px', overflowY: 'auto', fontFamily: '"JetBrains Mono", monospace', fontSize: '10px', color: '#cbd5e1', lineHeight: '1.6' }}>
+              {logs.length === 0 && <div style={{ color: '#475569' }}># Sistema pronto para migração...</div>}
+              {logs.map((log, i) => (
+                <div key={i} style={{ marginBottom: '6px', paddingBottom: '4px', borderBottom: '1px solid #334155' }}>
+                  <span style={{ color: log.status === 'success' ? '#4ade80' : log.status === 'skipped' ? '#fbbf24' : '#f87171', fontWeight: 700 }}>
+                    [{log.status.toUpperCase()}]
+                  </span> {log.sourceName}
+                  {log.error && <div style={{ color: '#fca5a5', marginLeft: '10px', fontSize: '9px' }}>↳ Erro: {log.error}</div>}
+                </div>
+              ))}
             </div>
           </div>
         </div>

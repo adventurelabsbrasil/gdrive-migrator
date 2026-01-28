@@ -12,7 +12,6 @@
     "storage"
   ],
   "host_permissions": [
-    "https://www.googleapis.com/*",
-    "https://accounts.google.com/*"
+    "https://www.googleapis.com/*"
   ]
 }
